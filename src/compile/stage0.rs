@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 /// Stage 0 means tokenizin
 /// And assignes variables
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Function {
     Sin,
     Cos,
@@ -25,15 +27,15 @@ pub enum Function {
     Round,
     Trunc,
 }
-#[derive(Debug)]
 
+#[derive(Debug, Clone)]
 pub enum Operand<'a> {
     Number(f64),
     Variable(&'a str),
     Function(Function),
 }
-#[derive(Debug)]
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Operator {
     Plus,
     Uplus,
@@ -44,8 +46,31 @@ pub enum Operator {
     Power,
     Modulus,
 }
-#[derive(Debug)]
 
+impl Operator {
+    fn precedence(&self) -> u8 {
+        match self {
+            Operator::Uplus | Operator::Uminus => 3,
+            Operator::Power => 4,
+            Operator::Multiply | Operator::Divide | Operator::Modulus => 2,
+            Operator::Plus | Operator::Minus => 1,
+        }
+    }
+}
+
+impl PartialOrd for Operator {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.precedence().cmp(&other.precedence()))
+    }
+}
+
+impl Ord for Operator {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.precedence().cmp(&other.precedence())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Token<'a> {
     Operand(Operand<'a>),
     Operator(Operator),
@@ -54,25 +79,25 @@ pub enum Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    fn is_integer(&self) -> bool {
+    pub fn is_integer(&self) -> bool {
         match &self {
             Token::Operand(_) => true,
             _ => false,
         }
     }
-    fn is_operator(&self) -> bool {
+    pub fn is_operator(&self) -> bool {
         match &self {
             Token::Operator(_) => true,
             _ => false,
         }
     }
-    fn is_paren_l(&self) -> bool {
+    pub fn is_paren_l(&self) -> bool {
         match &self {
             Token::ParenL => true,
             _ => false,
         }
     }
-    fn is_paren_r(&self) -> bool {
+    pub fn is_paren_r(&self) -> bool {
         match &self {
             Token::ParenR => true,
             _ => false,
@@ -85,8 +110,8 @@ impl<'a> Token<'a> {
 #[derive(Debug)]
 
 pub struct Expression<'a> {
-    raw: &'a str,
-    structurized: Option<Vec<Token<'a>>>,
+    raw: String,
+    pub structurized: Option<Vec<Token<'a>>>,
 }
 #[derive(Debug)]
 pub enum Error {
@@ -103,9 +128,56 @@ pub enum Error {
 impl<'a> Expression<'a> {
     pub fn new(raw: &'a str) -> Self {
         Expression {
-            raw,
+            raw: raw.to_owned(),
             structurized: None,
         }
+    }
+
+    // This function uses to fill variables into expression
+    // The syntax is
+    // x + y + x | 2 4
+    // this should become
+    // 2 + 4 + 2
+    // so x = 2, y = 4
+    fn replace_variables(&mut self) -> Result<(), Error> {
+        let mut new_string = self.raw.to_owned();
+        dbg!(&self.raw);
+        if self.raw.contains("|") {
+            let mut parts = self.raw.splitn(2, "|");
+            let expr_part = parts.next().unwrap().trim();
+            new_string = expr_part.to_owned();
+            let values_part = parts.next().unwrap().trim();
+
+            let mut var_names: Vec<&str> = expr_part
+                .split_whitespace()
+                .filter(|x| x.chars().all(|c| c.is_alphabetic()))
+                .collect();
+
+            let values: Vec<f64> = values_part
+                .split_whitespace()
+                .map(|s| s.parse::<f64>())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| Err::<(), Error>(Error::InvalidVariable(0)))
+                .unwrap();
+
+            // if var_names.len() != values.len() {
+            //     return Err(Error::InvalidVariable(0));
+            // }
+
+            let mut vars = HashMap::new();
+            for (var, val) in var_names.iter().zip(values.iter()) {
+                vars.insert(*var, Operand::Number(*val));
+            }
+
+            for (var, val) in vars.iter() {
+                if let Operand::Number(num) = val {
+                    new_string = new_string.replace(var, &num.to_string());
+                }
+            }
+        }
+        dbg!(&new_string);
+        self.raw = new_string;
+        Ok(())
     }
 
     // Function to stringify tokens sequence
@@ -135,7 +207,7 @@ impl<'a> Expression<'a> {
                 Token::ParenR => ")".to_string(),
             };
 
-            if !string.is_empty() && !matches!(token, Token::ParenR) {
+            if !string.is_empty() {
                 string.push_str(" ");
             }
             string.push_str(&token_str);
@@ -145,6 +217,10 @@ impl<'a> Expression<'a> {
     }
 
     pub fn tokenize(&mut self) -> Result<(), Error> {
+        if let Err(e) = self.replace_variables() {
+            return Err(e);
+        }
+
         if self.structurized.is_some() {
             return Err(Error::InvalidEOF(0));
         }
