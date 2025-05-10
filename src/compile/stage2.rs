@@ -18,6 +18,11 @@ impl<'a> UnwindStack<'a> {
                 Some(Token::Operand(t)) if let Operand::Number(_) = t => {
                     self.output_queue.push(Token::Operand(t))
                 }
+                Some(Token::Operator(o1)) => {
+                    if let Some(Token::Operator(o2)) = self.operator_stack.peek()
+                        && o2 >= o1
+                    {}
+                }
                 _ => break,
             }
         }
